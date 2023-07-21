@@ -1,0 +1,329 @@
+{
+	"info": {
+		"_postman_id": "809bb8b0-6dce-4abd-8781-76084a35ca89",
+		"name": "ssl_tls",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Log",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "default"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n\t\"source\": \"remote\",\r\n\t\"timestamp\": 107,\r\n\t\"message\": \"RR\"\r\n}"
+				},
+				"url": {
+					"raw": "http://127.0.0.1:5000",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5000"
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Log multiple",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "default"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "[\r\n\t{\r\n\t\t\"source\": \"server\",\r\n\t\t\"timestamp\": 300,\r\n\t\t\"message\": \"m1\"\r\n\t},\r\n\t{\r\n\t\t\"source\": \"remote\",\r\n\t\t\"timestamp\": 301,\r\n\t\t\"message\": \"m2\"\r\n\t}\r\n]"
+				},
+				"url": {
+					"raw": "http://127.0.0.1:5000",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5000"
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Log for a source",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "default"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n\t\"timestamp\": 203,\r\n\t\"message\": \"Direct2\"\r\n}"
+				},
+				"url": {
+					"raw": "http://127.0.0.1:5000/server",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5000",
+					"path": [
+						"server"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Log multiple for a source",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "default"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "[\r\n\t{\r\n\t\t\"timestamp\": 305,\r\n\t\t\"message\": \"d1\"\r\n\t},\r\n\t{\r\n\t\t\"timestamp\": 306,\r\n\t\t\"message\": \"d2\"\r\n\t},\r\n]"
+				},
+				"url": {
+					"raw": "http://127.0.0.1:5000/server",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5000",
+					"path": [
+						"server"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get logs for a source",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "default"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n\t\"source\": \"server\",\r\n\t\"timestamp\": 100,\r\n\t\"message\": \"Hi\"\r\n}"
+				},
+				"url": {
+					"raw": "http://127.0.0.1:5000/server",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5000",
+					"path": [
+						"server"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get logs for a source before a sequence number",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "default"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n\t\"source\": \"server\",\r\n\t\"timestamp\": 100,\r\n\t\"message\": \"Hi\"\r\n}"
+				},
+				"url": {
+					"raw": "http://127.0.0.1:5000/server?before_seq=3",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5000",
+					"path": [
+						"server"
+					],
+					"query": [
+						{
+							"key": "before_seq",
+							"value": "3"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get logs for a source after a sequence number",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "default"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n\t\"source\": \"server\",\r\n\t\"timestamp\": 100,\r\n\t\"message\": \"Hi\"\r\n}"
+				},
+				"url": {
+					"raw": "http://127.0.0.1:5000/server?after_seq=2",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5000",
+					"path": [
+						"server"
+					],
+					"query": [
+						{
+							"key": "after_seq",
+							"value": "2"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get logs for a source between a sequence number range",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "default"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n\t\"source\": \"server\",\r\n\t\"timestamp\": 100,\r\n\t\"message\": \"Hi\"\r\n}"
+				},
+				"url": {
+					"raw": "http://127.0.0.1:5000/server?after_seq=1&before_seq=4",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5000",
+					"path": [
+						"server"
+					],
+					"query": [
+						{
+							"key": "after_seq",
+							"value": "1"
+						},
+						{
+							"key": "before_seq",
+							"value": "4"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get a log entry for a source",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "default"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n\t\"source\": \"server\",\r\n\t\"timestamp\": 100,\r\n\t\"message\": \"Hi\"\r\n}"
+				},
+				"url": {
+					"raw": "http://127.0.0.1:5000/server/0",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "5000",
+					"path": [
+						"server",
+						"0"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
