@@ -23,6 +23,11 @@ INDEX_FILE_EXTENSION = "stidx"
 LOG_FILE_EXTENSION = "stlog"
 CHUNK_FILE_EXTENSION = "stchunk"
 
+LOG_SIZE = 1073741824  # 1 GB
+CHUNK_SIZE = 4294967296  # 4 GB
+#LOG_SIZE = 82
+#CHUNK_SIZE = 10
+
 
 store_dir = Path.home() / DEFAULT_STORE_REL_DIR
 
@@ -64,8 +69,7 @@ class Source:
 				read_header(index_in)
 				index = pickle.load(index_in)
 		else:
-			with open(self.index_file, 'wb') as index_out:
-				write_header(index_out)
+			self._index_updated = True
 			index = ([], [], 0)
 		self.log_index: list[tuple[int, int]] = index[0]
 		self.chunk_index: list[tuple[int, int]] = index[1]
@@ -85,11 +89,14 @@ class Source:
 		self.curr_log_file: Path = self.store_dir / f"{self.name}.{self.curr_log}.{LOG_FILE_EXTENSION}"
 		self.curr_chunk: int = self.chunk_index[-1][0]
 		self.curr_chunk_file: Path = self.store_dir / f"{self.name}.{self.curr_chunk}.{CHUNK_FILE_EXTENSION}"
-		self.curr_offset: int = self.curr_chunk_file.stat().st_size - HEADER_LENGTH
 
-		self.log_out = open(self.curr_log_file, 'ab')
-		self.chunk_out = open(self.curr_chunk_file, 'ab')
+		self.curr_log_size: int = self.curr_log_file.stat().st_size
+		self.log_out: io.BufferedWriter = open(self.curr_log_file, 'ab')
+		self.curr_chunk_size: int = self.curr_chunk_file.stat().st_size
+		self.chunk_out: io.BufferedWriter = open(self.curr_chunk_file, 'ab')
 		self._open = True
+
+		self.curr_offset: int = self.curr_chunk_size - HEADER_LENGTH
 
 		return self
 
@@ -110,22 +117,33 @@ class Source:
 
 	def add_log(self):
 		self._index_updated = True
+
 		self.curr_log += 1
 		new_file = self.store_dir / f"{self.name}.{self.curr_log}.{LOG_FILE_EXTENSION}"
 		if new_file.exists():
 			raise RuntimeError(f"bad index {self.name}: log {self.curr_log} exists but not indexed")
-		with open(new_file, 'wb') as new_file_out:
-			write_header(new_file_out)
+		self.curr_log_file = new_file
+
+		self.log_out = open(self.curr_log_file, 'ab')
+		write_header(self.log_out)
+		self.curr_log_size = HEADER_LENGTH
+
 		self.log_index.append((self.curr_num, self.curr_log))
 
 	def add_chunk(self):
 		self._index_updated = True
+
 		self.curr_chunk += 1
 		new_file = self.store_dir / f"{self.name}.{self.curr_chunk}.{CHUNK_FILE_EXTENSION}"
 		if new_file.exists():
 			raise RuntimeError(f"bad index {self.name}: chunk {self.curr_chunk} exists but not indexed")
-		with open(new_file, 'wb') as new_file_out:
-			write_header(new_file_out)
+		self.curr_chunk_file = new_file
+
+		self.chunk_out = open(self.curr_chunk_file, 'ab')
+		write_header(self.chunk_out)
+		self.curr_chunk_size = HEADER_LENGTH
+		self.curr_offset = 0
+
 		self.log_index.append((self.curr_num, self.curr_chunk))
 
 	def log(self, timestamp: int, message: str):
@@ -134,6 +152,12 @@ class Source:
 
 		msg = self.encode(message)
 		length = len(msg)
+
+		if self.curr_log_size + LOG_ROW_LENGTH > LOG_SIZE:
+			self.add_log()
+		if self.curr_chunk_size + length > CHUNK_SIZE:
+			self.add_chunk()
+
 		self.log_out.write(self.pack(self.curr_num, timestamp, self.curr_chunk, self.curr_offset, length))
 		self.chunk_out.write(msg)
 		self.curr_num += 1
