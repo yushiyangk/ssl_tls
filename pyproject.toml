@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools >= 61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ssl_tls"
+dynamic = ["version", "readme"]
+authors = [
+	{name = "Yu Shiyang", email = "yu.shiyang@gnayihs.uy"}
+]
+description = "SSL/TLS: Simple Service for Logging/Trivial Logging Service"
+license = {text = "MPL-2.0"}
+classifiers = []
+keywords = []
+requires-python = ">=3.9"

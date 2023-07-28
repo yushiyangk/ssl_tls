@@ -1,5 +1,3 @@
-# ssl_tls: Simple Service for Logging/Trivial Logging Service
-
 from __future__ import annotations
 
 import bisect
