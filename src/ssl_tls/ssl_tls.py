@@ -35,7 +35,7 @@ app = flask.Flask(__name__)
 
 
 class ChunkQuery(NamedTuple):
-	seq: int
+	num: int
 	offset: int
 	length: int
 
@@ -69,7 +69,7 @@ class Source:
 			index = ([], [], 0)
 		self.log_index: list[tuple[int, int]] = index[0]
 		self.chunk_index: list[tuple[int, int]] = index[1]
-		self.curr_seq: int = index[2]
+		self.curr_num: int = index[2]
 
 		for t, idx, ext in [("log", self.log_index, LOG_FILE_EXTENSION), ("chunk", self.chunk_index, CHUNK_FILE_EXTENSION)]:
 			if len(idx) == 0:
@@ -100,13 +100,13 @@ class Source:
 		if self._index_updated:
 			with open(self.index_file, 'wb') as index_out:
 				write_header(index_out)
-				pickle.dump((self.log_index, self.chunk_index, self.curr_seq), index_out)
+				pickle.dump((self.log_index, self.chunk_index, self.curr_num), index_out)
 
 	def encode(self, message: str) -> bytes:
 		return message.encode('utf-8')
 
-	def pack(self, seq: int, timestamp: int, chunk: int, offset: int, length: int) -> bytes:
-		return struct.pack(LOG_ROW_FORMAT, seq, timestamp, chunk, offset, length)
+	def pack(self, num: int, timestamp: int, chunk: int, offset: int, length: int) -> bytes:
+		return struct.pack(LOG_ROW_FORMAT, num, timestamp, chunk, offset, length)
 
 	def add_log(self):
 		self._index_updated = True
@@ -116,7 +116,7 @@ class Source:
 			raise RuntimeError(f"bad index {self.name}: log {self.curr_log} exists but not indexed")
 		with open(new_file, 'wb') as new_file_out:
 			write_header(new_file_out)
-		self.log_index.append((self.curr_seq, self.curr_log))
+		self.log_index.append((self.curr_num, self.curr_log))
 
 	def add_chunk(self):
 		self._index_updated = True
@@ -126,7 +126,7 @@ class Source:
 			raise RuntimeError(f"bad index {self.name}: chunk {self.curr_chunk} exists but not indexed")
 		with open(new_file, 'wb') as new_file_out:
 			write_header(new_file_out)
-		self.log_index.append((self.curr_seq, self.curr_chunk))
+		self.log_index.append((self.curr_num, self.curr_chunk))
 
 	def log(self, timestamp: int, message: str):
 		if not self._open:
@@ -134,9 +134,9 @@ class Source:
 
 		msg = self.encode(message)
 		length = len(msg)
-		self.log_out.write(self.pack(self.curr_seq, timestamp, self.curr_chunk, self.curr_offset, length))
+		self.log_out.write(self.pack(self.curr_num, timestamp, self.curr_chunk, self.curr_offset, length))
 		self.chunk_out.write(msg)
-		self.curr_seq += 1
+		self.curr_num += 1
 		self._index_updated = True
 		self.curr_offset += length
 
@@ -177,7 +177,7 @@ def read_chunk(source_name: str, chunk: int, queries: list[ChunkQuery]) -> list[
 		output = []
 		for query in queries:
 			if chunk_size < HEADER_LENGTH + query.offset + query.length:
-				raise RuntimeError(f"bad log {source_name}: chunk {chunk} ended before msg (seq {query.seq}, offset {query.offset}, length {query.length})")
+				raise RuntimeError(f"bad log {source_name}: chunk {chunk} ended before msg (num {query.num}, offset {query.offset}, length {query.length})")
 			chunk_in.seek(HEADER_LENGTH + query.offset)
 			message = chunk_in.read(query.length).decode('utf-8')
 			output.append(message)
@@ -232,8 +232,8 @@ def log_source(source_name: str) -> flask.Response:
 @app.route("/<source_name>", methods=['GET'])
 def get_logs(source_name):
 	args = flask.request.args
-	after_seq = args.get("after_seq", type=int)
-	before_seq = args.get("before_seq", type=int)
+	after_num = args.get("after_num", type=int)
+	before_num = args.get("before_num", type=int)
 
 	source_id = Source.compute_id(source_name)
 	if not directory_file.exists() or directory_file.stat().st_size == 0:
@@ -251,17 +251,17 @@ def get_logs(source_name):
 	log_index: list[tuple[int, int]] = index[0]
 
 	# Binary search for starting log
-	if after_seq is None:
+	if after_num is None:
 		start_log = 0
 	else:
-		start_log = bisect.bisect_left(log_index, after_seq, key=lambda t: t[0])
-		if len(log_index) >= start_log or (log_index[start_log][0] >= after_seq):
+		start_log = bisect.bisect_left(log_index, after_num, key=lambda t: t[0])
+		if len(log_index) >= start_log or (log_index[start_log][0] >= after_num):
 			start_log -= 1
 
 	# Read logs sequentially
 	output = []
 	terminate = False
-	for log_i, (log_start_seq, log) in enumerate(log_index[start_log:]):
+	for log_i, (log_start_num, log) in enumerate(log_index[start_log:]):
 		log_file: Path = store_dir / f"{source_name}/{source_name}.{log}.{LOG_FILE_EXTENSION}"
 		if not log_file.exists():
 			continue
@@ -273,27 +273,27 @@ def get_logs(source_name):
 			read_header(log_in)
 
 			# For the first log read, binary search for starting row
-			if after_seq is not None and log_i == 0:
+			if after_num is not None and log_i == 0:
 				low = 0
 				high = log_size // LOG_ROW_LENGTH - 1
 				mid = (low + high) // 2
 				found = False
-				seq = None
+				num = None
 				while low <= high:
 					mid = (low + high) // 2
 					log_in.seek(HEADER_LENGTH + mid * LOG_ROW_LENGTH)
 					row = log_in.read(LOG_ROW_LENGTH)
-					seq, timestamp, chunk, offset, length = struct.unpack(LOG_ROW_FORMAT, row)
-					if seq < after_seq:
+					num, timestamp, chunk, offset, length = struct.unpack(LOG_ROW_FORMAT, row)
+					if num < after_num:
 						low = mid + 1
-					elif seq > after_seq:
+					elif num > after_num:
 						high = mid - 1
-					else:  # seq == start_seq
+					else:  # num == start_num
 						found = True
 						break
 
-				# log_in pointer has advanced to the next row, read from that point, except when seq > after_seq
-				if not found and seq is not None and seq > after_seq:  # reread seq, which is on the previous row
+				# log_in pointer has advanced to the next row, read from that point, except when num > after_num
+				if not found and num is not None and num > after_num:  # reread the row of num, which is on the previous row
 					log_in.seek(HEADER_LENGTH + mid * LOG_ROW_LENGTH)
 			else:
 				pass  # read from 0
@@ -307,8 +307,8 @@ def get_logs(source_name):
 			while len(row) != 0:
 				if len(row) != LOG_ROW_LENGTH:
 					raise RuntimeError(f"bad log {source_name}.{log}: incorrect row length")
-				seq, timestamp, chunk, offset, length = struct.unpack(LOG_ROW_FORMAT, row)
-				if before_seq is not None and seq >= before_seq:
+				num, timestamp, chunk, offset, length = struct.unpack(LOG_ROW_FORMAT, row)
+				if before_num is not None and num >= before_num:
 					terminate = True
 					break
 
@@ -327,10 +327,10 @@ def get_logs(source_name):
 
 				records.append({
 					"source": source_name,
-					"sequence_number": seq,
+					"number": num,
 					"timestamp": timestamp,
 				})
-				queries.append(ChunkQuery(seq, offset, length))
+				queries.append(ChunkQuery(num, offset, length))
 
 				row = log_in.read(LOG_ROW_LENGTH)
 
@@ -346,8 +346,8 @@ def get_logs(source_name):
 	return flask.make_response(output, 200)
 
 
-@app.route("/<source_name>/<int:seq>", methods=['GET'])
-def get_seq(source_name: str, seq: int) -> flask.Response:
+@app.route("/<source_name>/<int:num>", methods=['GET'])
+def get_num(source_name: str, num: int) -> flask.Response:
 	source_id = Source.compute_id(source_name)
 	if not directory_file.exists() or directory_file.stat().st_size == 0:
 		return flask.make_response("", 404)
@@ -363,8 +363,8 @@ def get_seq(source_name: str, seq: int) -> flask.Response:
 		index = pickle.load(index_in)
 	log_index: list[tuple[int, int]] = index[0]
 
-	log_i = bisect.bisect_left(log_index, seq, key=lambda t: t[0])
-	if len(log_index) >= log_i or (log_index[log_i][0] >= seq):
+	log_i = bisect.bisect_left(log_index, num, key=lambda t: t[0])
+	if len(log_index) >= log_i or (log_index[log_i][0] >= num):
 		log_i -= 1
 	log = log_index[log_i][1]
 	log_file: Path = store_dir / f"{source_name}/{source_name}.{log}.{LOG_FILE_EXTENSION}"
@@ -384,16 +384,16 @@ def get_seq(source_name: str, seq: int) -> flask.Response:
 			row = log_in.read(LOG_ROW_LENGTH)
 			if len(row) != LOG_ROW_LENGTH:
 				raise RuntimeError(f"bad log {source_name}.{log}: incorrect row length")
-			s, timestamp, chunk, offset, length = struct.unpack(LOG_ROW_FORMAT, row)
-			if s < seq:
+			n, timestamp, chunk, offset, length = struct.unpack(LOG_ROW_FORMAT, row)
+			if n < num:
 				low = mid + 1
-			elif s > seq:
+			elif n > num:
 				high = mid - 1
-			else:  # s == seq
-				message = read_chunk(source_name, chunk, [ChunkQuery(seq, offset, length)])
+			else:  # n == num
+				message = read_chunk(source_name, chunk, [ChunkQuery(num, offset, length)])
 				return flask.make_response({
 					"source": source_name,
-					"sequence_number": seq,
+					"number": num,
 					"timestamp": timestamp,
 					"message": message,
 				}, 200)
