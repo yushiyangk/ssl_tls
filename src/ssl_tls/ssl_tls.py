@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import bisect
 import hashlib
+import io
 import pickle
 import struct
 from pathlib import Path
@@ -9,7 +10,10 @@ from pathlib import Path
 import flask
 
 
-LOG_ROW_SIZE = 40
+STORE_VERSION = 1
+HEADER_LENGTH = 2
+HEADER_FORMAT = '!H'
+LOG_ROW_LENGTH = 40
 LOG_ROW_FORMAT = '!QQQQQ'
 
 DEFAULT_STORE_REL_DIR = Path(".ssl_tls")
@@ -29,6 +33,14 @@ directory_file = store_dir / DIRECTORY_FILE
 app = flask.Flask(__name__)
 
 
+def write_header(fout: io.BufferedWriter):
+	fout.write(struct.pack(HEADER_FORMAT, STORE_VERSION))
+
+def read_header(fin: io.BufferedReader):
+	header = fin.read(HEADER_LENGTH)
+	assert struct.unpack(HEADER_FORMAT, header) == (STORE_VERSION,)
+
+
 class Source:
 	def __init__(self, name: str, store_dir: Path):
 		self._open: bool = False
@@ -42,9 +54,11 @@ class Source:
 	def __enter__(self) -> Source:
 		if self.index_file.exists() and self.index_file.stat().st_size > 0:
 			with open(self.index_file, 'rb') as index_in:
+				read_header(index_in)
 				index = pickle.load(index_in)
 		else:
-			self.index_file.touch()
+			with open(self.index_file, 'wb') as index_out:
+				write_header(index_out)
 			index = ([], [], 0)
 		self.log_index: list[tuple[int, int]] = index[0]
 		self.chunk_index: list[tuple[int, int]] = index[1]
@@ -55,7 +69,8 @@ class Source:
 				file = self.store_dir / f"{self.name}.0.{ext}"
 				if file.exists():
 					raise RuntimeError(f"bad index {self.name}: {t} 0 exists but not indexed")
-				file.touch()
+				with open(file, 'wb') as file_out:
+					write_header(file_out)
 				idx.append((0, 0))
 				self._index_updated = True
 
@@ -63,7 +78,7 @@ class Source:
 		self.curr_log_file: Path = self.store_dir / f"{self.name}.{self.curr_log}.{LOG_FILE_EXTENSION}"
 		self.curr_chunk: int = self.chunk_index[-1][0]
 		self.curr_chunk_file: Path = self.store_dir / f"{self.name}.{self.curr_chunk}.{CHUNK_FILE_EXTENSION}"
-		self.curr_offset: int = self.curr_chunk_file.stat().st_size
+		self.curr_offset: int = self.curr_chunk_file.stat().st_size - HEADER_LENGTH
 
 		self.log_out = open(self.curr_log_file, 'ab')
 		self.chunk_out = open(self.curr_chunk_file, 'ab')
@@ -77,6 +92,7 @@ class Source:
 		self.chunk_out.close()
 		if self._index_updated:
 			with open(self.index_file, 'wb') as index_out:
+				write_header(index_out)
 				pickle.dump((self.log_index, self.chunk_index, self.curr_seq), index_out)
 
 	def encode(self, message: str) -> bytes:
@@ -91,7 +107,8 @@ class Source:
 		new_file = self.store_dir / f"{self.name}.{self.curr_log}.{LOG_FILE_EXTENSION}"
 		if new_file.exists():
 			raise RuntimeError(f"bad index {self.name}: log {self.curr_log} exists but not indexed")
-		new_file.touch()
+		with open(new_file, 'wb') as new_file_out:
+			write_header(new_file_out)
 		self.log_index.append((self.curr_seq, self.curr_log))
 
 	def add_chunk(self):
@@ -100,7 +117,8 @@ class Source:
 		new_file = self.store_dir / f"{self.name}.{self.curr_chunk}.{CHUNK_FILE_EXTENSION}"
 		if new_file.exists():
 			raise RuntimeError(f"bad index {self.name}: chunk {self.curr_chunk} exists but not indexed")
-		new_file.touch()
+		with open(new_file, 'wb') as new_file_out:
+			write_header(new_file_out)
 		self.log_index.append((self.curr_seq, self.curr_chunk))
 
 	def log(self, timestamp: int, message: str):
@@ -120,10 +138,11 @@ class Source:
 		return hashlib.sha1(name.encode('utf-8')).digest()
 
 
-def process_log(source_name: str, timestamp: int, message: str) -> int:
+def log_message(source_name: str, timestamp: int, message: str) -> int:
 	source_id = Source.compute_id(source_name)
 	if directory_file.exists() and directory_file.stat().st_size > 0:
 		with open(directory_file, 'rb') as directory_in:
+			read_header(directory_in)
 			directory: dict[bytes, str] = pickle.load(directory_in)
 	else:
 		directory = {}
@@ -131,6 +150,7 @@ def process_log(source_name: str, timestamp: int, message: str) -> int:
 	if source_id not in directory:
 		directory[source_id] = source_name
 		with open(directory_file, 'wb') as directory_out:
+			write_header(directory_out)
 			pickle.dump(directory, directory_out)
 
 	with Source(source_name, store_dir) as source:
@@ -145,7 +165,8 @@ def read_chunk(source_name: str, chunk: int, offset: int, length: int) -> str | 
 	if not chunk_file.exists() or chunk_file.stat().st_size < offset + length:
 		return None
 	with open(chunk_file, 'rb') as chunk_in:
-		chunk_in.seek(offset)
+		read_header(chunk_in)
+		chunk_in.seek(offset, io.SEEK_CUR)
 		message = chunk_in.read(length).decode('utf-8')
 		return message
 
@@ -168,13 +189,13 @@ def log() -> flask.Response:
 		source_name = entry['source']
 		timestamp = entry['timestamp']
 		message = entry['message']
-		process_log(source_name, timestamp, message)
+		log_message(source_name, timestamp, message)
 
 	return flask.make_response("", 200)
 
 
 @app.route("/<source_name>", methods=['POST'])
-def log_from(source_name: str) -> flask.Response:
+def log_source(source_name: str) -> flask.Response:
 	content_type = flask.request.headers['Content-Type']
 	if content_type != 'application/json':
 		return flask.make_response("", 415)
@@ -190,7 +211,7 @@ def log_from(source_name: str) -> flask.Response:
 			return flask.Response("", status=400)
 		timestamp = entry['timestamp']
 		message = entry['message']
-		process_log(source_name, timestamp, message)
+		log_message(source_name, timestamp, message)
 
 	return flask.make_response("", 200)
 
@@ -205,12 +226,14 @@ def get_logs(source_name):
 	if not directory_file.exists() or directory_file.stat().st_size == 0:
 		return flask.make_response("", 404)
 	with open(directory_file, 'rb') as directory_in:
+		read_header(directory_in)
 		directory: dict[bytes, str] = pickle.load(directory_in)
 
 	index_file: Path = store_dir / f"{source_name}/{source_name}.{INDEX_FILE_EXTENSION}"
 	if source_id not in directory or not index_file.exists() or index_file.stat().st_size == 0:
 		return flask.make_response("", 404)
 	with open(index_file, 'rb') as index_in:
+		read_header(index_in)
 		index = pickle.load(index_in)
 	log_index: list[tuple[int, int]] = index[0]
 
@@ -232,15 +255,16 @@ def get_logs(source_name):
 			continue
 
 		with open(log_file, 'rb') as log_in:
+			read_header(log_in)
 			if start_seq is not None and i == 0:
 				low = 0
-				high = log_size // LOG_ROW_SIZE - 1
+				high = log_size // LOG_ROW_LENGTH - 1
 				mid = (low + high) // 2
 				found = False
 				while low <= high:
 					mid = (low + high) // 2
-					log_in.seek(mid * LOG_ROW_SIZE)
-					row = log_in.read(LOG_ROW_SIZE)
+					log_in.seek(HEADER_LENGTH + mid * LOG_ROW_LENGTH)
+					row = log_in.read(LOG_ROW_LENGTH)
 					s, timestamp, chunk, offset, length = struct.unpack(LOG_ROW_FORMAT, row)
 					if s < start_seq:
 						low = mid + 1
@@ -252,13 +276,13 @@ def get_logs(source_name):
 
 				# log_in pointer has advanced to the next row, read from that point, except
 				if not found and s > start_seq:  # reread the previous row which corresponds to s
-					log_in.seek(mid * LOG_ROW_SIZE)
+					log_in.seek(HEADER_LENGTH + mid * LOG_ROW_LENGTH)
 			else:
 				pass  # read from 0
 
-			row = log_in.read(LOG_ROW_SIZE)
+			row = log_in.read(LOG_ROW_LENGTH)
 			while len(row) != 0:
-				if len(row) != LOG_ROW_SIZE:
+				if len(row) != LOG_ROW_LENGTH:
 					return flask.make_response("", 500)
 				seq, timestamp, chunk, offset, length = struct.unpack(LOG_ROW_FORMAT, row)
 				if end_seq is not None and seq >= end_seq:
@@ -273,7 +297,7 @@ def get_logs(source_name):
 					"timestamp": timestamp,
 					"message": message,
 				})
-				row = log_in.read(LOG_ROW_SIZE)
+				row = log_in.read(LOG_ROW_LENGTH)
 
 		if terminate:
 			break
@@ -287,12 +311,14 @@ def get_seq(source_name: str, seq: int) -> flask.Response:
 	if not directory_file.exists() or directory_file.stat().st_size == 0:
 		return flask.make_response("", 404)
 	with open(directory_file, 'rb') as directory_in:
+		read_header(directory_in)
 		directory: dict[bytes, str] = pickle.load(directory_in)
 
 	index_file: Path = store_dir / f"{source_name}/{source_name}.{INDEX_FILE_EXTENSION}"
 	if source_id not in directory or not index_file.exists() or index_file.stat().st_size == 0:
 		return flask.make_response("", 404)
 	with open(index_file, 'rb') as index_in:
+		read_header(index_in)
 		index = pickle.load(index_in)
 	log_index: list[tuple[int, int]] = index[0]
 
@@ -308,12 +334,13 @@ def get_seq(source_name: str, seq: int) -> flask.Response:
 		return flask.make_response("", 404)
 
 	with open(log_file, 'rb') as log_in:
+		read_header(log_in)
 		low = 0
-		high = log_size // LOG_ROW_SIZE - 1
+		high = log_size // LOG_ROW_LENGTH - 1
 		while low <= high:
 			mid = (low + high) // 2
-			log_in.seek(mid * LOG_ROW_SIZE)
-			row = log_in.read(LOG_ROW_SIZE)
+			log_in.seek(HEADER_LENGTH + mid * LOG_ROW_LENGTH)
+			row = log_in.read(LOG_ROW_LENGTH)
 			s, timestamp, chunk, offset, length = struct.unpack(LOG_ROW_FORMAT, row)
 			if s < seq:
 				low = mid + 1
