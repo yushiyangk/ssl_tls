@@ -414,7 +414,7 @@ def get_num(source_name: str, num: int) -> flask.Response:
 			elif n > num:
 				high = mid - 1
 			else:  # n == num
-				message = read_chunk(source_name, chunk, [ChunkQuery(num, offset, length)])
+				[message] = read_chunk(source_name, chunk, [ChunkQuery(num, offset, length)])
 				return flask.make_response({
 					"source": source_name,
 					"number": num,
