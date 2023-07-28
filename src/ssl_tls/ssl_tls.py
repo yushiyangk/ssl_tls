@@ -232,8 +232,8 @@ def log_source(source_name: str) -> flask.Response:
 @app.route("/<source_name>", methods=['GET'])
 def get_logs(source_name):
 	args = flask.request.args
-	start_seq = args.get("after_seq", type=int)
-	end_seq = args.get("before_seq", type=int)
+	after_seq = args.get("after_seq", type=int)
+	before_seq = args.get("before_seq", type=int)
 
 	source_id = Source.compute_id(source_name)
 	if not directory_file.exists() or directory_file.stat().st_size == 0:
@@ -250,13 +250,15 @@ def get_logs(source_name):
 		index = pickle.load(index_in)
 	log_index: list[tuple[int, int]] = index[0]
 
-	if start_seq is None:
+	# Binary search for starting log
+	if after_seq is None:
 		start_log = 0
 	else:
-		start_log = bisect.bisect_left(log_index, start_seq, key=lambda t: t[0])
-		if len(log_index) >= start_log or (log_index[start_log][0] >= start_seq):
+		start_log = bisect.bisect_left(log_index, after_seq, key=lambda t: t[0])
+		if len(log_index) >= start_log or (log_index[start_log][0] >= after_seq):
 			start_log -= 1
 
+	# Read logs sequentially
 	output = []
 	terminate = False
 	for log_i, (log_start_seq, log) in enumerate(log_index[start_log:]):
@@ -269,26 +271,29 @@ def get_logs(source_name):
 
 		with open(log_file, 'rb') as log_in:
 			read_header(log_in)
-			if start_seq is not None and log_i == 0:
+
+			# For the first log read, binary search for starting row
+			if after_seq is not None and log_i == 0:
 				low = 0
 				high = log_size // LOG_ROW_LENGTH - 1
 				mid = (low + high) // 2
 				found = False
+				seq = None
 				while low <= high:
 					mid = (low + high) // 2
 					log_in.seek(HEADER_LENGTH + mid * LOG_ROW_LENGTH)
 					row = log_in.read(LOG_ROW_LENGTH)
 					seq, timestamp, chunk, offset, length = struct.unpack(LOG_ROW_FORMAT, row)
-					if seq < start_seq:
+					if seq < after_seq:
 						low = mid + 1
-					elif seq > start_seq:
+					elif seq > after_seq:
 						high = mid - 1
-					else:  # s == start_seq
+					else:  # seq == start_seq
 						found = True
 						break
 
-				# log_in pointer has advanced to the next row, read from that point, except
-				if not found and seq > start_seq:  # reread the previous row which corresponds to s
+				# log_in pointer has advanced to the next row, read from that point, except when seq > after_seq
+				if not found and seq is not None and seq > after_seq:  # reread seq, which is on the previous row
 					log_in.seek(HEADER_LENGTH + mid * LOG_ROW_LENGTH)
 			else:
 				pass  # read from 0
@@ -297,12 +302,13 @@ def get_logs(source_name):
 			records = []
 			queries = []
 
+			# Read rows sequentially
 			row = log_in.read(LOG_ROW_LENGTH)
 			while len(row) != 0:
 				if len(row) != LOG_ROW_LENGTH:
 					raise RuntimeError(f"bad log {source_name}.{log}: incorrect row length")
 				seq, timestamp, chunk, offset, length = struct.unpack(LOG_ROW_FORMAT, row)
-				if end_seq is not None and seq >= end_seq:
+				if before_seq is not None and seq >= before_seq:
 					terminate = True
 					break
 
